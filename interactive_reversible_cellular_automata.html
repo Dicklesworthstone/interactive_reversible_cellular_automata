@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Reversible 1D Cellular Automata with Interactive Timeline</title>
+<style>
+body {
+  margin: 0; padding: 0; background: #222; color: #ddd;
+  font-family: Arial, sans-serif; font-size: 14px;
+  user-select: none; overflow: hidden;
+}
+#controls {
+  position: absolute; top: 10px; left: 10px;
+  background: rgba(40,40,40,0.9);
+  padding: 15px; border-radius: 8px;
+  z-index: 999; backdrop-filter: blur(5px);
+}
+#controls label { display: inline-block; width: 80px; }
+#controls select {
+  width: 120px;
+  background: #333; color: #fff;
+  border: 1px solid #555;
+  padding: 4px;
+}
+#controls button {
+  margin-right: 5px;
+  background: #444;
+  border: 1px solid #555;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+#controls button:hover {
+  background: #555;
+}
+#controls button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+#timeline {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  right: 20px;
+  height: 40px;
+  background: rgba(40,40,40,0.9);
+  border-radius: 8px;
+  padding: 10px;
+  backdrop-filter: blur(5px);
+}
+#timelineCanvas {
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+.overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: all 0.3s ease;
+}
+#reverseOverlay {
+  display: none;
+}
+#patternOverlay {
+  display: none;
+  position: absolute;
+  top: 100px;
+  left: 0;
+  right: 0;
+  bottom: 80px;
+  background: rgba(0,0,0,0.8);
+  z-index: 100;
+  pointer-events: auto;
+}
+.pattern-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 10px;
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+.pattern-cell {
+  aspect-ratio: 1;
+  background: #333;
+  border-radius: 4px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.pattern-bits {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.pattern-bit {
+  width: 20px;
+  height: 20px;
+  border: 1px solid #666;
+  background: #000;
+}
+.pattern-bit.active {
+  background: #fff;
+}
+.pattern-result {
+  width: 20px;
+  height: 20px;
+  border: 1px solid #666;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+.pattern-result::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border: 2px solid #0f0;
+  border-radius: 2px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+.pattern-result::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border: 2px solid #0f0;
+  border-radius: 2px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.pattern-result:hover::before {
+  opacity: 1;
+}
+.pattern-result:hover::after {
+  opacity: 1;
+}
+.pattern-result.active {
+  background: #fff;
+}
+@keyframes clickPulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+.pattern-result.clicked {
+  animation: clickPulse 0.3s ease;
+}
+.direction-indicator {
+  position: absolute;
+  right: 20px;
+  top: 20px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  background: rgba(0,0,0,0.7);
+  color: #fff;
+  font-size: 18px;
+  font-weight: bold;
+  transition: all 0.3s ease;
+}
+.direction-indicator.reverse {
+  background: rgba(255,0,0,0.3);
+}
+#renderer-info {
+  position: absolute;
+  right: 20px;
+  bottom: 80px;
+  padding: 8px 16px;
+  background: rgba(0,0,0,0.7);
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 12px;
+  color: #0f0;
+}
+#tooltip {
+  position: absolute;
+  background: rgba(0,0,0,0.8);
+  color: #fff;
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  pointer-events: none;
+  display: none;
+  z-index: 1000;
+}
+#debugInfo {
+  position: absolute;
+  left: 20px;
+  bottom: 80px;
+  padding: 8px;
+  background: rgba(0,0,0,0.7);
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 12px;
+  color: #0f0;
+}
+</style>
+</head>
+<body>
+<div id="controls">
+  <div>
+    <label>Rule:</label>
+    <select id="ruleSelect">
+      <option value="73">Rule 73</option>
+      <option value="90">Rule 90</option>
+      <option value="94">Rule 94</option>
+      <option value="105">Rule 105</option>
+      <option value="110" selected>Rule 110</option>
+      <option value="193">Rule 193</option>
+      <option value="210">Rule 210</option>
+    </select>
+  </div>
+  <div style="margin-top: 10px;">
+    <button id="resetBtn">Reset</button>
+    <button id="startBtn">Start</button>
+    <button id="stopBtn" disabled>Stop</button>
+    <button id="stepBtn">Step</button>
+    <button id="reverseBtn">Reverse</button>
+    <button id="showPatternsBtn">Show Patterns</button>
+    <button id="highlightBtn">Highlight Reversibility Changes: Off</button>
+  </div>
+</div>
+<div id="timeline">
+  <canvas id="timelineCanvas"></canvas>
+</div>
+<div id="reverseOverlay" class="overlay"></div>
+<div id="patternOverlay" class="overlay">
+  <div class="pattern-grid"></div>
+</div>
+<div id="directionIndicator" class="direction-indicator">→</div>
+<div id="renderer-info">Initializing...</div>
+<div id="tooltip"></div>
+<div id="debugInfo"></div>
+<canvas id="caCanvas"></canvas>
+<script type="module">
+const computeShaderCode = `
+struct Params {
+  rule: u32,
+  wordsPerRow: u32,
+  direction: i32,
+  stepIndex: u32,
+};
+
+@group(0) @binding(0) var<uniform> params: Params;
+@group(0) @binding(1) var<storage, read> currentRow: array<u32>;
+@group(0) @binding(2) var<storage, read> previousRow: array<u32>;
+@group(0) @binding(3) var<storage, read_write> nextRow: array<u32>;
+
+fn getBit(value: u32, position: u32) -> u32 {
+  return (value >> position) & 1u;
+}
+
+fn setBit(value: u32, position: u32, bit: u32) -> u32 {
+  let mask = ~(1u << position);
+  return (value & mask) | (bit << position);
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+  let idx = global_id.x;
+  if (idx >= params.wordsPerRow) {
+    return;
+  }
+
+  var left = currentRow[idx];
+  var center = currentRow[idx];
+  var right = currentRow[idx];
+
+  if (idx == 0u) {
+    left = currentRow[params.wordsPerRow - 1u];
+  } else {
+    left = currentRow[idx - 1u];
+  }
+
+  if (idx == params.wordsPerRow - 1u) {
+    right = currentRow[0u];
+  } else {
+    right = currentRow[idx + 1u];
+  }
+
+  var result = 0u;
+
+  for (var i = 0u; i < 32u; i = i + 1u) {
+    let l = getBit(left, (i + 31u) % 32u);
+    let c = getBit(center, i);
+    let r = getBit(right, (i + 1u) % 32u);
+
+    let pattern = (l << 2u) | (c << 1u) | r;
+    let ruleResult = getBit(params.rule, 7u - pattern);
+
+    result = setBit(result, i, ruleResult);
+  }
+
+  if (params.direction == 1) {
+    result = result ^ previousRow[idx];
+  } else {
+    result = result ^ nextRow[idx];
+  }
+
+  nextRow[idx] = result;
+}
+`;
+
+class ReversibleCA {
+  constructor(canvas, width, height, rule) {
+    this.canvas = canvas;
+    this.width = (width + 63) & ~63;
+    this.height = height;
+    this.rule = rule & 0xff;
+
+    this.wordsPerRow = Math.ceil(this.width / 32);
+    this.currentRow = new Uint32Array(this.wordsPerRow);
+    this.previousRow = new Uint32Array(this.wordsPerRow);
+    this.nextRow = new Uint32Array(this.wordsPerRow);
+
+    this.history = new Array(this.height);
+    this.differenceHistory = new Array(this.height);
+    this.historyIndex = 0;
+    this.maxHistory = this.height;
+
+    this.direction = 1;
+    this.running = false;
+    this.stepIndex = 0;
+
+    this.memoCache = new Map();
+    this.memoLimit = 10000;
+
+    this.ctx = this.canvas.getContext('2d', { alpha: false });
+    this.imageData = this.ctx.createImageData(this.width, 1);
+    this.buffer = new Uint32Array(this.imageData.data.buffer);
+
+    this.timelineCanvas = document.getElementById('timelineCanvas');
+    this.timelineCtx = this.timelineCanvas.getContext('2d');
+    this.setupTimeline();
+
+    this.showingPatterns = false;
+    this.highlightChanges = false; // toggle for highlighting reversibility changes
+    this.setupPatternDisplay();
+
+    this.initWebGPU().catch(err => {
+      console.error('WebGPU initialization failed:', err);
+      this.fallbackToCPU();
+    });
+  }
+
+  setupPatternDisplay() {
+    const patternOverlay = document.getElementById('patternOverlay');
+    const grid = patternOverlay.querySelector('.pattern-grid');
+    grid.innerHTML = '';
+    for (let i = 7; i >= 0; i--) {
+      const cell = document.createElement('div');
+      cell.className = 'pattern-cell';
+      const bits = document.createElement('div');
+      bits.className = 'pattern-bits';
+      for (let j = 2; j >= 0; j--) {
+        const bit = document.createElement('div');
+        bit.className = `pattern-bit ${(i & (1 << j)) ? 'active' : ''}`;
+        bits.appendChild(bit);
+      }
+      const result = document.createElement('div');
+      result.className = `pattern-result ${(this.rule & (1 << i)) ? 'active' : ''}`;
+      result.setAttribute('data-pattern', i);
+      result.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const pattern = parseInt(e.target.getAttribute('data-pattern'));
+        const currentBit = (this.rule & (1 << pattern)) ? 1 : 0;
+        if (currentBit) {
+          this.rule &= ~(1 << pattern);
+        } else {
+          this.rule |= (1 << pattern);
+        }
+        const wasActive = e.target.classList.contains('active');
+        e.target.classList.toggle('active', !wasActive);
+        const ruleSelect = document.getElementById('ruleSelect');
+        Array.from(ruleSelect.options).forEach(option => {
+          if (option.value === this.rule.toString()) {
+            ruleSelect.removeChild(option);
+          }
+        });
+        const newOption = document.createElement('option');
+        newOption.value = this.rule;
+        newOption.textContent = `Rule ${this.rule}`;
+        ruleSelect.appendChild(newOption);
+        ruleSelect.value = this.rule;
+        if (this.useGPU) this.updateGPUUniforms();
+        const wasRunning = this.running;
+        if (wasRunning) this.stop();
+        this.reset();
+        if (wasRunning) this.start();
+        console.log('Rule changed to:', this.rule);
+      });
+      cell.appendChild(bits);
+      cell.appendChild(result);
+      grid.appendChild(cell);
+    }
+  }
+
+  togglePatterns() {
+    if (this.running) this.stop();
+    this.showingPatterns = !this.showingPatterns;
+    document.getElementById('patternOverlay').style.display = this.showingPatterns ? 'block' : 'none';
+    if (this.showingPatterns) this.setupPatternDisplay();
+  }
+
+  toggleHighlight() {
+    this.highlightChanges = !this.highlightChanges;
+    document.getElementById('highlightBtn').textContent = `Highlight Reversibility Changes: ${this.highlightChanges ? 'On' : 'Off'}`;
+    this.redrawAll();
+  }
+
+  async initWebGPU() {
+    if (!navigator.gpu) throw new Error('WebGPU not supported');
+    const adapter = await navigator.gpu.requestAdapter({powerPreference: 'high-performance'});
+    if (!adapter) throw new Error('No WebGPU adapter found');
+    this.device = await adapter.requestDevice();
+    this.computeModule = this.device.createShaderModule({ code: computeShaderCode });
+    this.computePipeline = this.device.createComputePipeline({
+      layout: 'auto',
+      compute: { module: this.computeModule, entryPoint: 'main' }
+    });
+
+    const bufferSize = this.wordsPerRow * 4;
+
+    this.uniformBuffer = this.device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+
+    this.gpuBuffers = {
+      current: this.device.createBuffer({
+        size: bufferSize,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+      }),
+      previous: this.device.createBuffer({
+        size: bufferSize,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+      }),
+      next: this.device.createBuffer({
+        size: bufferSize,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+      })
+    };
+
+    this.currentStaging = 0;
+    this.stagingBuffers = [
+      this.device.createBuffer({size: bufferSize, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST}),
+      this.device.createBuffer({size: bufferSize, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST})
+    ];
+    this.mappingPromises = [null, null];
+    this.frameInFlight = false;
+
+    this.bindGroup = this.device.createBindGroup({
+      layout: this.computePipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.uniformBuffer }},
+        { binding: 1, resource: { buffer: this.gpuBuffers.current }},
+        { binding: 2, resource: { buffer: this.gpuBuffers.previous }},
+        { binding: 3, resource: { buffer: this.gpuBuffers.next }}
+      ]
+    });
+
+    this.useGPU = true;
+    document.getElementById('renderer-info').textContent = 'Using WebGPU';
+    this.reset();
+  }
+
+  fallbackToCPU() {
+    this.useGPU = false;
+    document.getElementById('renderer-info').textContent = 'Using CPU';
+    this.reset();
+  }
+
+  setupTimeline() {
+    const dpr = window.devicePixelRatio || 1;
+    this.timelineCanvas.width = this.timelineCanvas.offsetWidth * dpr;
+    this.timelineCanvas.height = this.timelineCanvas.offsetHeight * dpr;
+    this.timelineCtx.scale(dpr, dpr);
+
+    let dragging = false;
+    const handleDrag = (e) => {
+      const rect = this.timelineCanvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const progress = Math.max(0, Math.min(1, x / rect.width));
+      const targetStep = Math.floor(progress * this.maxHistory);
+      this.jumpToStep(targetStep);
+    };
+
+    this.timelineCanvas.addEventListener('mousedown', e => { dragging = true; handleDrag(e); });
+    this.timelineCanvas.addEventListener('mousemove', e => {
+      if (dragging) handleDrag(e);
+      const rect = this.timelineCanvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const progress = x / rect.width;
+      const step = Math.floor(progress * this.maxHistory);
+      const tooltip = document.getElementById('tooltip');
+      tooltip.style.display = 'block';
+      tooltip.style.left = `${e.clientX}px`;
+      tooltip.style.top = `${rect.top - 30}px`;
+      tooltip.textContent = `Step: ${step}`;
+    });
+    this.timelineCanvas.addEventListener('mouseleave', () => {
+      dragging = false;
+      document.getElementById('tooltip').style.display = 'none';
+    });
+    document.addEventListener('mouseup', () => { dragging = false; });
+  }
+
+  jumpToStep(step) {
+    if (step < 0 || step >= this.maxHistory) return;
+    const wasRunning = this.running;
+    if (wasRunning) this.stop();
+    this.stepIndex = step;
+    this.loadHistoryState(step);
+    this.redrawAll();
+    if (this.useGPU) {
+      this.device.queue.writeBuffer(this.gpuBuffers.current, 0, this.currentRow);
+      this.device.queue.writeBuffer(this.gpuBuffers.previous, 0, this.previousRow);
+      this.updateGPUUniforms();
+    }
+    if (wasRunning) this.start();
+  }
+
+  updateTimeline() {
+    const ctx = this.timelineCtx;
+    const width = this.timelineCanvas.width;
+    const height = this.timelineCanvas.height;
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = '#333';
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = '#666';
+    for (let i = 0; i < this.history.length; i++) {
+      if (this.history[i]) {
+        const x = (i / this.maxHistory) * width;
+        ctx.fillRect(x, 0, 2, height);
+      }
+    }
+    ctx.fillStyle = this.direction === 1 ? '#0f0' : '#f00';
+    const currentX = (this.stepIndex / this.maxHistory) * width;
+    ctx.fillRect(currentX - 2, 0, 4, height);
+  }
+
+  reset() {
+    this.direction = 1;
+    this.stepIndex = 0;
+    this.history = new Array(this.maxHistory);
+    this.differenceHistory = new Array(this.maxHistory);
+
+    for (let i = 0; i < this.wordsPerRow; i++) {
+      this.currentRow[i] = Math.random() * 0xffffffff >>> 0;
+    }
+    this.previousRow.fill(0);
+
+    this.history[0] = new Uint32Array(this.currentRow);
+    this.differenceHistory[0] = new Uint32Array(this.wordsPerRow);
+    this.updateDirectionIndicator();
+    document.getElementById('reverseOverlay').style.display = 'none';
+    this.ctx.fillStyle = '#000';
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    this.drawRow(0, this.currentRow, this.differenceHistory[0]);
+    this.updateTimeline();
+    if (this.useGPU) {
+      this.device.queue.writeBuffer(this.gpuBuffers.current, 0, this.currentRow);
+      this.device.queue.writeBuffer(this.gpuBuffers.previous, 0, this.previousRow);
+      this.updateGPUUniforms();
+    }
+  }
+
+  updateGPUUniforms() {
+    const uniformData = new Uint32Array([this.rule, this.wordsPerRow, this.direction, this.stepIndex]);
+    this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformData);
+  }
+
+  async step() {
+    if (this.direction === 1) {
+      await this.stepForward();
+    } else {
+      await this.stepBackward();
+    }
+  }
+
+  async stepForward() {
+    if (this.stepIndex >= this.maxHistory - 1) return;
+    let nextState;
+    let nonReversibleNext;
+    if (this.useGPU) {
+      [nextState, nonReversibleNext] = await this.computeGPUStepWithNonReversible();
+      if (!nextState) return;
+    } else {
+      [nextState, nonReversibleNext] = this.computeCPUStepWithNonReversible();
+    }
+    this.previousRow.set(this.currentRow);
+    this.currentRow.set(nextState);
+    this.stepIndex++;
+    this.history[this.stepIndex] = new Uint32Array(nextState);
+
+    const diffRow = new Uint32Array(this.wordsPerRow);
+    for (let i = 0; i < this.wordsPerRow; i++) {
+      diffRow[i] = nextState[i] ^ nonReversibleNext[i];
+    }
+    this.differenceHistory[this.stepIndex] = diffRow;
+
+    this.drawRow(this.stepIndex, nextState, diffRow);
+    this.updateTimeline();
+  }
+
+  async computeGPUStepWithNonReversible() {
+    if (this.frameInFlight) return [null, null];
+    this.frameInFlight = true;
+    try {
+      const stagingIdx = this.currentStaging;
+      const nextStaging = (stagingIdx + 1) % 2;
+      const commandEncoder = this.device.createCommandEncoder();
+
+      const nonRev = this.computeRuleOnly();
+
+      const computePass = commandEncoder.beginComputePass();
+      computePass.setPipeline(this.computePipeline);
+      computePass.setBindGroup(0, this.bindGroup);
+      computePass.dispatchWorkgroups(Math.ceil(this.wordsPerRow / 256));
+      computePass.end();
+
+      commandEncoder.copyBufferToBuffer(
+        this.gpuBuffers.next, 0,
+        this.stagingBuffers[stagingIdx], 0,
+        this.wordsPerRow * 4
+      );
+
+      this.device.queue.submit([commandEncoder.finish()]);
+
+      if (this.mappingPromises[nextStaging]) {
+        this.stagingBuffers[nextStaging].unmap();
+        this.mappingPromises[nextStaging] = null;
+      }
+
+      this.mappingPromises[stagingIdx] = this.stagingBuffers[stagingIdx].mapAsync(GPUMapMode.READ);
+      await this.mappingPromises[stagingIdx];
+
+      const nextState = new Uint32Array(this.stagingBuffers[stagingIdx].getMappedRange());
+      const result = new Uint32Array(nextState);
+
+      this.currentStaging = nextStaging;
+
+      [this.gpuBuffers.previous, this.gpuBuffers.current, this.gpuBuffers.next] =
+        [this.gpuBuffers.current, this.gpuBuffers.next, this.gpuBuffers.previous];
+
+      this.bindGroup = this.device.createBindGroup({
+        layout: this.computePipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: this.uniformBuffer }},
+          { binding: 1, resource: { buffer: this.gpuBuffers.current }},
+          { binding: 2, resource: { buffer: this.gpuBuffers.previous }},
+          { binding: 3, resource: { buffer: this.gpuBuffers.next }}
+        ]
+      });
+
+      return [result, nonRev];
+    } catch (error) {
+      console.error('GPU buffer mapping error:', error);
+      return [null, null];
+    } finally {
+      this.frameInFlight = false;
+    }
+  }
+
+  computeRuleOnly() {
+    const result = new Uint32Array(this.wordsPerRow);
+    const leftShifted = new Uint32Array(this.wordsPerRow);
+    const rightShifted = new Uint32Array(this.wordsPerRow);
+
+    {
+      let carry = (this.currentRow[this.wordsPerRow-1] & 1) << 31;
+      for (let i = 0; i < this.wordsPerRow; i++) {
+        const word = this.currentRow[i];
+        leftShifted[i] = (word >>> 1) | carry;
+        carry = (word & 1) << 31;
+      }
+    }
+
+    {
+      let carry = (this.currentRow[0] & 0x80000000) ? 1 : 0;
+      for (let i = this.wordsPerRow - 1; i >= 0; i--) {
+        const word = this.currentRow[i];
+        rightShifted[i] = ((word << 1) | carry) >>> 0;
+        carry = (word & 0x80000000) ? 1 : 0;
+      }
+    }
+
+    for (let i = 0; i < this.wordsPerRow; i++) {
+      let val = 0;
+      for (let bit = 0; bit < 32; bit++) {
+        const l = (leftShifted[i] >>> bit) & 1;
+        const c = (this.currentRow[i] >>> bit) & 1;
+        const r = (rightShifted[i] >>> bit) & 1;
+        const pattern = (l << 2) | (c << 1) | r;
+        const ruleResult = (this.rule >>> (7 - pattern)) & 1;
+        val = (val & ~(1 << bit)) | (ruleResult << bit);
+      }
+      result[i] = val;
+    }
+    return result;
+  }
+
+  computeCPUStepWithNonReversible() {
+    const nonReversibleResult = this.computeRuleOnly();
+    const finalResult = new Uint32Array(this.wordsPerRow);
+    for (let i = 0; i < this.wordsPerRow; i++) {
+      finalResult[i] = nonReversibleResult[i] ^ this.previousRow[i];
+    }
+    return [finalResult, nonReversibleResult];
+  }
+
+  computeCPUStep() {
+    const result = new Uint32Array(this.wordsPerRow);
+    const leftShifted = new Uint32Array(this.wordsPerRow);
+    const rightShifted = new Uint32Array(this.wordsPerRow);
+
+    {
+      let carry = (this.currentRow[this.wordsPerRow-1] & 1) << 31;
+      for (let i = 0; i < this.wordsPerRow; i++) {
+        const word = this.currentRow[i];
+        leftShifted[i] = (word >>> 1) | carry;
+        carry = (word & 1) << 31;
+      }
+    }
+
+    {
+      let carry = (this.currentRow[0] & 0x80000000) ? 1 : 0;
+      for (let i = this.wordsPerRow - 1; i >= 0; i--) {
+        const word = this.currentRow[i];
+        rightShifted[i] = ((word << 1) | carry) >>> 0;
+        carry = (word & 0x80000000) ? 1 : 0;
+      }
+    }
+
+    for (let i = 0; i < this.wordsPerRow; i++) {
+      const left = leftShifted[i];
+      const center = this.currentRow[i];
+      const right = rightShifted[i];
+      const prev = this.previousRow[i];
+
+      let key = `${left},${center},${right},${prev}`;
+      let value = this.memoCache.get(key);
+
+      if (value === undefined) {
+        value = this.computeWordPatterns(left, center, right, prev);
+        if (this.memoCache.size >= this.memoLimit) {
+          const keys = Array.from(this.memoCache.keys());
+          for (let j = 0; j < keys.length / 2; j++) {
+            this.memoCache.delete(keys[j]);
+          }
+        }
+        this.memoCache.set(key, value);
+      }
+      result[i] = value;
+    }
+
+    return result;
+  }
+
+  computeWordPatterns(left, center, right, prev) {
+    let result = 0;
+    for (let i = 0; i < 8; i++) {
+      const pattern = 7 - i;
+      const active = (this.rule >>> i) & 1;
+      const leftBit = (pattern >>> 2) & 1;
+      const centerBit = (pattern >>> 1) & 1;
+      const rightBit = pattern & 1;
+
+      let match = 0xffffffff;
+      for (let bit = 0; bit < 32; bit++) {
+        const l = (left >>> bit) & 1;
+        const c = (center >>> bit) & 1;
+        const r = (right >>> bit) & 1;
+        if ((l !== leftBit) || (c !== centerBit) || (r !== rightBit)) {
+          match &= ~(1 << bit);
+        }
+      }
+      if (active) result |= match;
+    }
+    return result ^ prev;
+  }
+
+  async stepBackward() {
+    if (this.stepIndex <= 0) return;
+    this.stepIndex--;
+    this.currentRow.set(this.history[this.stepIndex]);
+    if (this.stepIndex > 0) {
+      this.previousRow.set(this.history[this.stepIndex - 1]);
+    } else {
+      this.previousRow.fill(0);
+    }
+    if (this.useGPU) {
+      this.device.queue.writeBuffer(this.gpuBuffers.current, 0, this.currentRow);
+      this.device.queue.writeBuffer(this.gpuBuffers.previous, 0, this.previousRow);
+      this.updateGPUUniforms();
+    }
+    this.drawRow(this.stepIndex, this.currentRow, this.differenceHistory[this.stepIndex]);
+    this.updateTimeline();
+  }
+
+  redrawAll() {
+    this.ctx.fillStyle = '#000';
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    for (let i = 0; i <= this.stepIndex; i++) {
+      if (this.history[i]) {
+        this.drawRow(i, this.history[i], this.differenceHistory[i]);
+      }
+    }
+    this.updateTimeline();
+  }
+
+  drawRow(y, row, diff) {
+    const data = this.buffer;
+    let pixelIdx = 0;
+    const forwardDirection = (this.direction === 1);
+    for (let w = 0; w < this.wordsPerRow; w++) {
+      let bits = row[w];
+      let diffBits = diff ? diff[w] : 0;
+      for (let b = 0; b < 32; b++) {
+        const isSet = (bits & 1) !== 0;
+        const hasDiff = (diffBits & 1) !== 0;
+        let color;
+        if (this.highlightChanges && hasDiff) {
+          // highlight differences induced by reversibility
+          if (isSet) {
+            color = forwardDirection ? 0xFF00FF00 : 0xFFFF0000;
+          } else {
+            color = forwardDirection ? 0xFF006600 : 0xFF800000;
+          }
+        } else {
+          // no highlight
+          color = isSet ? 0xFFFFFFFF : 0xFF000000;
+        }
+        data[pixelIdx++] = color;
+        bits >>>= 1;
+        diffBits >>>= 1;
+      }
+    }
+    this.ctx.putImageData(this.imageData, 0, y);
+  }
+
+  loadHistoryState(step) {
+    if (step >= 0 && step < this.history.length && this.history[step]) {
+      this.currentRow.set(this.history[step]);
+      if (step > 0 && this.history[step - 1]) {
+        this.previousRow.set(this.history[step - 1]);
+      } else {
+        this.previousRow.fill(0);
+      }
+    }
+  }
+
+  updateDirectionIndicator() {
+    const indicator = document.getElementById('directionIndicator');
+    indicator.textContent = this.direction === 1 ? '→' : '←';
+    indicator.classList.toggle('reverse', this.direction === -1);
+  }
+
+  start() {
+    if (this.running) return;
+    this.running = true;
+    this.animate();
+    document.getElementById('startBtn').disabled = true;
+    document.getElementById('stopBtn').disabled = false;
+    document.getElementById('stepBtn').disabled = true;
+  }
+
+  stop() {
+    this.running = false;
+    this.cleanup();
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('stopBtn').disabled = true;
+    document.getElementById('stepBtn').disabled = false;
+  }
+
+  animate() {
+    if (!this.running) return;
+    this.step().then(() => {
+      if (this.running) {
+        requestAnimationFrame(() => this.animate());
+      }
+    });
+  }
+
+  toggleReverse() {
+    this.direction *= -1;
+    this.updateDirectionIndicator();
+    if (this.useGPU) this.updateGPUUniforms();
+    this.redrawAll();
+  }
+
+  setRule(rule) {
+    this.rule = rule & 0xff;
+    if (this.useGPU) {
+      this.updateGPUUniforms();
+    }
+    this.setupPatternDisplay();
+  }
+
+  cleanup() {
+    if (this.useGPU) {
+      for (let i = 0; i < 2; i++) {
+        if (this.mappingPromises[i]) {
+          this.stagingBuffers[i].unmap();
+          this.mappingPromises[i] = null;
+        }
+      }
+    }
+  }
+}
+
+const canvas = document.getElementById('caCanvas');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+let ca = new ReversibleCA(canvas, canvas.width, canvas.height, 110);
+
+document.getElementById('resetBtn').onclick = () => ca.reset();
+document.getElementById('startBtn').onclick = () => ca.start();
+document.getElementById('stopBtn').onclick = () => ca.stop();
+document.getElementById('stepBtn').onclick = () => ca.step();
+document.getElementById('reverseBtn').onclick = () => ca.toggleReverse();
+document.getElementById('showPatternsBtn').onclick = () => ca.togglePatterns();
+document.getElementById('highlightBtn').onclick = () => ca.toggleHighlight();
+document.getElementById('ruleSelect').onchange = (e) => {
+  ca.setRule(parseInt(e.target.value, 10));
+  ca.reset();
+};
+
+window.addEventListener('resize', () => {
+  const wasRunning = ca.running;
+  if (wasRunning) ca.stop();
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  ca = new ReversibleCA(canvas, canvas.width, canvas.height,
+    parseInt(document.getElementById('ruleSelect').value, 10));
+  if (wasRunning) ca.start();
+});
+
+window.addEventListener('resize', () => {
+  const timeline = document.getElementById('timelineCanvas');
+  const dpr = window.devicePixelRatio || 1;
+  timeline.width = timeline.offsetWidth * dpr;
+  timeline.height = timeline.offsetHeight * dpr;
+  ca.updateTimeline();
+});
+</script>
+</body>
+</html>
